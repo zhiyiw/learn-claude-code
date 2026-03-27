@@ -27,6 +27,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import httpx
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
@@ -36,7 +37,10 @@ if os.getenv("ANTHROPIC_BASE_URL"):
     os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
 
 WORKDIR = Path.cwd()
-client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
+client = Anthropic(
+    base_url=os.getenv("ANTHROPIC_BASE_URL"),
+    timeout=httpx.Timeout(None),  # 禁用超时检测，支持慢速本地模型
+)
 MODEL = os.environ["MODEL_ID"]
 
 SYSTEM = f"You are a coding agent at {WORKDIR}. Use the task tool to delegate exploration or subtasks."
@@ -115,10 +119,12 @@ CHILD_TOOLS = [
 # -- Subagent: fresh context, filtered tools, summary-only return --
 def run_subagent(prompt: str) -> str:
     sub_messages = [{"role": "user", "content": prompt}]  # fresh context
+    response = None
     for _ in range(30):  # safety limit
         response = client.messages.create(
             model=MODEL, system=SUBAGENT_SYSTEM, messages=sub_messages,
-            tools=CHILD_TOOLS, max_tokens=8000,
+            tools=CHILD_TOOLS, max_tokens=32000,
+            timeout=None,
         )
         sub_messages.append({"role": "assistant", "content": response.content})
         if response.stop_reason != "tool_use":
@@ -145,7 +151,8 @@ def agent_loop(messages: list):
     while True:
         response = client.messages.create(
             model=MODEL, system=SYSTEM, messages=messages,
-            tools=PARENT_TOOLS, max_tokens=8000,
+            tools=PARENT_TOOLS, max_tokens=32000,
+            timeout=None,
         )
         messages.append({"role": "assistant", "content": response.content})
         if response.stop_reason != "tool_use":
